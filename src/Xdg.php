@@ -117,5 +117,60 @@ class Xdg
         return $fallback;
     }
 
+    /**
+     * @return string|null
+     */
+    public function getConfigFile($relativePath)
+    {
+        foreach ($this->getConfigDirs() as $configDir) {
+            $path = $configDir . DIRECTORY_SEPARATOR . $relativePath;
+            if (file_exists($path)) {
+                return $path;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @return string|null
+     */
+    public function getDataFile($relativePath)
+    {
+        foreach ($this->getDataDirs() as $dataDir) {
+            $path = $dataDir . DIRECTORY_SEPARATOR . $relativePath;
+            if (file_exists($path)) {
+                return $path;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @return string|null
+     */
+    public function getCacheFile($relativePath)
+    {
+        $path = $this->getHomeCacheDir() . DIRECTORY_SEPARATOR . $relativePath;
+        if (file_exists($path)) {
+            return $path;
+        }
+
+        return null;
+    }
+
+    /**
+     * @return string|null
+     */
+    public function getRuntimeFile($relativePath)
+    {
+        $path = $this->getRuntimeDir() . DIRECTORY_SEPARATOR . $relativePath;
+        if (file_exists($path)) {
+            return $path;
+        }
+
+        return null;
+    }
 
 }
