@@ -2,47 +2,53 @@
 
 class XdgTest extends PHPUnit_Framework_TestCase
 {
+    private $isolator;
+
+    public function setUp()
+    {
+        $this->isolator = $this->getMock('\Icecave\Isolator\Isolator', array('getenv', 'is_dir', 'mkdir', 'lstat', 'rmdir', 'getmyuid'));
+    }
+
     /**
      * @return \XdgBaseDir\Xdg
      */
     public function getXdg()
     {
-        return new \XdgBaseDir\Xdg();
+        $xdg = new \XdgBaseDir\Xdg();
+        $xdg->setIsolator($this->isolator);
+
+        return $xdg;
     }
 
     public function testXdgPutCache()
     {
-        putenv('XDG_DATA_HOME=tmp/');
-        putenv('XDG_CONFIG_HOME=tmp/');
-        putenv('XDG_CACHE_HOME=tmp/');
+        $this->expectSingleEnvironment('XDG_CACHE_HOME', 'tmp/');
         $this->assertEquals('tmp/', $this->getXdg()->getHomeCacheDir());
     }
 
     public function testXdgPutData()
     {
-        putenv('XDG_DATA_HOME=tmp/');
+        $this->expectSingleEnvironment('XDG_DATA_HOME', 'tmp/');
         $this->assertEquals('tmp/', $this->getXdg()->getHomeDataDir());
     }
 
     public function testXdgPutConfig()
     {
-        putenv('XDG_CONFIG_HOME=tmp/');
+        $this->expectSingleEnvironment('XDG_CONFIG_HOME', 'tmp/');
         $this->assertEquals('tmp/', $this->getXdg()->getHomeConfigDir());
     }
 
     public function testXdgDataDirsShouldIncludeHomeDataDir()
     {
-        putenv('XDG_DATA_HOME=tmp/');
-        putenv('XDG_CONFIG_HOME=tmp/');
+        $this->isolator->expects($this->exactly(2))->method('getenv')->withConsecutive(array('XDG_DATA_DIRS'), array('XDG_DATA_HOME'))->will($this->onConsecutiveCalls('tmp/', 'home_dir/'));
 
-        $this->assertArrayHasKey('tmp/', array_flip($this->getXdg()->getDataDirs()));
+        $this->assertSame(array('home_dir/', 'tmp/'), $this->getXdg()->getDataDirs());
     }
 
     public function testXdgConfigDirsShouldIncludeHomeConfigDir()
     {
-        putenv('XDG_CONFIG_HOME=tmp/');
-
-        $this->assertArrayHasKey('tmp/', array_flip($this->getXdg()->getConfigDirs()));
+        $this->isolator->expects($this->exactly(2))->method('getenv')->withConsecutive(array('XDG_CONFIG_DIRS'), array('XDG_CONFIG_HOME'))->will($this->onConsecutiveCalls('tmp/', 'home_dir/'));
+        $this->assertSame(array('home_dir/', 'tmp/'), $this->getXdg()->getConfigDirs());
     }
 
     /**
@@ -50,10 +56,8 @@ class XdgTest extends PHPUnit_Framework_TestCase
      */
     public function testGetRuntimeDir()
     {
-        putenv('XDG_RUNTIME_DIR=/tmp/');
-        $runtimeDir = $this->getXdg()->getRuntimeDir();
-
-        $this->assertEquals(is_dir($runtimeDir), true);
+        $this->expectSingleEnvironment('XDG_RUNTIME_DIR', 'tmp/');
+        $this->assertSame('tmp/', $this->getXdg()->getRuntimeDir());
     }
 
     /**
@@ -63,7 +67,7 @@ class XdgTest extends PHPUnit_Framework_TestCase
      */
     public function testGetRuntimeDirShouldThrowException()
     {
-        putenv('XDG_RUNTIME_DIR=');
+        $this->expectSingleEnvironment('XDG_RUNTIME_DIR', false);
         $this->getXdg()->getRuntimeDir(true);
     }
 
@@ -73,10 +77,13 @@ class XdgTest extends PHPUnit_Framework_TestCase
      */
     public function testGetRuntimeDirShouldCreateDirectory()
     {
-        putenv('XDG_RUNTIME_DIR=');
-        $dir = $this->getXdg()->getRuntimeDir(false);
-        $permission = decoct(fileperms($dir) & 0777);
-        $this->assertEquals(700, $permission);
+        $fallbackDir = XdgBaseDir\Xdg::RUNTIME_DIR_FALLBACK . 'foo';
+        $this->isolator->expects($this->exactly(2))->method('getenv')->withConsecutive(array('XDG_RUNTIME_DIR'), array('USER'))->will($this->onConsecutiveCalls(false, 'foo'));
+        $this->isolator->expects($this->once())->method('is_dir')->with($fallbackDir)->willReturn(false);
+        $this->isolator->expects($this->exactly(1))->method('mkdir')->with($fallbackDir, 0700, true)->willReturn(true);
+        $this->isolator->expects($this->once())->method('lstat')->with($fallbackDir)->willReturn(array('mode' => 0700, 'uid' => 'my_uid'));
+        $this->isolator->expects($this->once())->method('getmyuid')->willReturn('my_uid');
+        $this->assertSame($fallbackDir, $this->getXdg()->getRuntimeDir(false));
     }
 
 
@@ -85,20 +92,18 @@ class XdgTest extends PHPUnit_Framework_TestCase
      */
     public function testGetRuntimeShouldDeleteDirsWithWrongPermission()
     {
-        $runtimeDir = XdgBaseDir\Xdg::RUNTIME_DIR_FALLBACK . getenv('USER');
+        $fallbackDir = XdgBaseDir\Xdg::RUNTIME_DIR_FALLBACK . 'foo';
+        $this->isolator->expects($this->exactly(2))->method('getenv')->withConsecutive(array('XDG_RUNTIME_DIR'), array('USER'))->will($this->onConsecutiveCalls(false, 'foo'));
+        $this->isolator->expects($this->once())->method('is_dir')->with($fallbackDir)->willReturn(true);
+        $this->isolator->expects($this->once())->method('lstat')->with($fallbackDir)->willReturn(array('mode' => 0764, 'uid' => 'my_uid'));
+        $this->isolator->expects($this->once())->method('getmyuid')->willReturn('my_uid');
+        $this->isolator->expects($this->exactly(1))->method('rmdir')->with($fallbackDir)->willReturn(true);
+        $this->isolator->expects($this->exactly(1))->method('mkdir')->with($fallbackDir, 0700, true)->willReturn(true);
+        $this->assertSame($fallbackDir, $this->getXdg()->getRuntimeDir(false));
+    }
 
-        rmdir($runtimeDir);
-        mkdir($runtimeDir, 0764, true);
-
-        // Permission should be wrong now
-        $permission = decoct(fileperms($runtimeDir) & 0777);
-        $this->assertEquals(764, $permission);
-
-        putenv('XDG_RUNTIME_DIR=');
-        $dir = $this->getXdg()->getRuntimeDir(false);
-
-        // Permission should be fixed
-        $permission = decoct(fileperms($dir) & 0777);
-        $this->assertEquals(700, $permission);
+    private function expectSingleEnvironment($name, $value)
+    {
+        $this->isolator->expects($this->once())->method('getenv')->with($name)->willReturn($value);
     }
 }

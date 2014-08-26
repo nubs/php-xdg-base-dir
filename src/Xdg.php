@@ -2,6 +2,8 @@
 
 namespace XdgBaseDir;
 
+use Icecave\Isolator\Isolator;
+
 /**
  * Simple implementation of the XDG standard http://standards.freedesktop.org/basedir-spec/basedir-spec-latest.html
  *
@@ -17,12 +19,14 @@ class Xdg
     CONST S_IRWXG  = 00056; // rwx group
     CONST RUNTIME_DIR_FALLBACK = '/tmp/php-xdg-runtime-dir-fallback-';
 
+    private $isolator;
+    
     /**
      * @return string
      */
     public function getHomeDir()
     {
-        return getenv('HOME');
+        return $this->getenv('HOME');
     }
 
     /**
@@ -30,7 +34,7 @@ class Xdg
      */
     public function getHomeConfigDir()
     {
-        $path = getenv('XDG_CONFIG_HOME') ? : $this->getHomeDir() . DIRECTORY_SEPARATOR . '.config';
+        $path = $this->getenv('XDG_CONFIG_HOME') ? : $this->getHomeDir() . DIRECTORY_SEPARATOR . '.config';
 
         return $path;
     }
@@ -40,7 +44,7 @@ class Xdg
      */
     public function getHomeDataDir()
     {
-        $path = getenv('XDG_DATA_HOME') ? : $this->getHomeDir() . DIRECTORY_SEPARATOR . '.local' . DIRECTORY_SEPARATOR . 'share';
+        $path = $this->getenv('XDG_DATA_HOME') ? : $this->getHomeDir() . DIRECTORY_SEPARATOR . '.local' . DIRECTORY_SEPARATOR . 'share';
 
         return $path;
     }
@@ -50,7 +54,8 @@ class Xdg
      */
     public function getConfigDirs()
     {
-        $configDirs = getenv('XDG_CONFIG_DIRS') ? explode(':', getenv('XDG_CONFIG_DIRS')) : array('/etc/xdg');
+        $configDirsEnv = $this->getenv('XDG_CONFIG_DIRS');
+        $configDirs = $configDirsEnv ? explode(':', $configDirsEnv) : array('/etc/xdg');
 
         $paths = array_merge(array($this->getHomeConfigDir()), $configDirs);
 
@@ -62,7 +67,8 @@ class Xdg
      */
     public function getDataDirs()
     {
-        $dataDirs = getenv('XDG_DATA_DIRS') ? explode(':', getenv('XDG_DATA_DIRS')) : array('/usr/local/share', '/usr/share');
+        $dataDirsEnv = $this->getenv('XDG_DATA_DIRS');
+        $dataDirs = $dataDirsEnv ? explode(':', $dataDirsEnv) : array('/usr/local/share', '/usr/share');
 
         $paths = array_merge(array($this->getHomeDataDir()), $dataDirs);
         return $paths;
@@ -73,7 +79,7 @@ class Xdg
      */
     public function getHomeCacheDir()
     {
-        $path = getenv('XDG_CACHE_HOME') ? : $this->getHomeDir() . DIRECTORY_SEPARATOR . '.cache';
+        $path = $this->getenv('XDG_CACHE_HOME') ? : $this->getHomeDir() . DIRECTORY_SEPARATOR . '.cache';
 
         return $path;
 
@@ -81,7 +87,7 @@ class Xdg
 
     public function getRuntimeDir($strict=true)
     {
-        if ($runtimeDir = getenv('XDG_RUNTIME_DIR')) {
+        if ($runtimeDir = $this->getenv('XDG_RUNTIME_DIR')) {
             return $runtimeDir;
         }
 
@@ -89,33 +95,57 @@ class Xdg
             throw new \RuntimeException('XDG_RUNTIME_DIR was not set');
         }
 
-        $fallback = self::RUNTIME_DIR_FALLBACK . getenv('USER');
+        $fallback = self::RUNTIME_DIR_FALLBACK . $this->getenv('USER');
 
         $create = false;
 
-        if (!is_dir($fallback)) {
-            mkdir($fallback, 0700, true);
+        if (!$this->callGlobal('is_dir', array($fallback))) {
+            $this->callGlobal('mkdir', array($fallback, 0700, true));
         }
 
-        $st = lstat($fallback);
+        $st = $this->callGlobal('lstat', array($fallback));
 
         # The fallback must be a directory
         if (!$st['mode'] & self::S_IFDIR) {
-            rmdir($fallback);
+            $this->callGlobal('rmdir', array($fallback));
             $create = true;
-        } elseif ($st['uid'] != getmyuid() ||
+        } elseif ($st['uid'] != $this->callGlobal('getmyuid') ||
             $st['mode'] & (self::S_IRWXG | self::S_IRWXO)
         ) {
-            rmdir($fallback);
+            $this->callGlobal('rmdir', array($fallback));
             $create = true;
         }
 
         if ($create) {
-            mkdir($fallback, 0700, true);
+            $this->callGlobal('mkdir', array($fallback, 0700, true));
         }
 
         return $fallback;
     }
 
+    public function setIsolator(Isolator $isolator = null)
+    {
+        $this->isolator = $isolator;
+    }
+
+    /**
+     * @return string|false
+     */
+    private function getenv($name)
+    {
+        return $this->callGlobal('getenv', array($name));
+    }
+
+    /**
+     * @return mixed
+     */
+    private function callGlobal($function, array $args = [])
+    {
+        if ($this->isolator !== null) {
+            return call_user_func_array(array($this->isolator, $function), $args);
+        }
+
+        return call_user_func_array($function, $args);
+    }
 
 }
